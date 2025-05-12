@@ -16,12 +16,23 @@
   ******************************************************************************
   */
 /* USER CODE END Header */
+
+// BUG: Normal processing time for trace() is 3.75us. However sometimes this jumps to ~40us. Needs investigation
+// BUG:
+// BUG:
+// TODO: Optimize trace function
+// TODO:
+// TODO:
+
+
+
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "spiflash.h"
+#include "trace_spiflash.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -51,6 +62,34 @@ DMA_HandleTypeDef hdma_spi3_tx;
 /* USER CODE BEGIN PV */
 
 
+// Demo traceer
+int trace_trigger = 0;
+// 1 block = 256 bytes
+#define TRACEBUF_SZ_B (1024)
+//#define TRACE_FILE_LEN_B (32768 * 8)
+#define TRACE_FILE_LEN_B (1024)
+uint8_t trace_buf[TRACEBUF_SZ_B];
+
+uint32_t ctr32=0;
+uint32_t tt32=0;
+trace_object_t traceobj = {
+		.stat = 0,
+		.buffer_start = trace_buf,
+		.buffer_len_b = TRACEBUF_SZ_B,
+		.trace_entry_len_b = 8,
+		.trace_file_len_b = TRACE_FILE_LEN_B,
+		.flash_len_b = 1024*1024*16,
+		.num_tracevals = 2,
+		.tracevals = {
+		{&ctr32, 4},
+		{&tt32, 4}
+		}
+};
+
+
+
+
+
 // parser
 #define MAX_COMMMAND_SIZE (2048)
 #define FLASH_BUF_SZ (4096)
@@ -63,6 +102,7 @@ typedef enum {
     CMD_FLASH_WRITE = 4,
     CMD_FLASH_ERASE_SECTOR = 5,
     CMD_FLASH_ERASE_CHIP = 6,
+	CMD_TRIGGER_TRACE = 7,
     CMD_INVALID = -1
 } command_index_t;
 uint32_t params[MAX_PARAMS];
@@ -139,6 +179,13 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
+
+
+  HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_14);				// run commutator
+  HAL_Delay(10);
+
+
+
   MX_DMA_Init();
   MX_LPUART1_UART_Init();
   MX_SPI3_Init();
@@ -162,125 +209,137 @@ int main(void)
   /* USER CODE BEGIN WHILE */
 
 
-	HAL_Delay(1000);
+  HAL_Delay(1000);
 
-	printf("\n\n\nstarting\n\n\n");
+//  printf("\n\n\nstarting\n\n\n");
 
 
-	printf("reading flash jedec ID\n");
-	flash_read_jedec_id(&hspi3);
+  printf("reading flash jedec ID\n");
+  uint32_t jedec_id = flash_read_jedec_id(&hspi3);
+  printf("Flash JEDEC ID: %02X %02X %02X\n", (jedec_id>>16)&0x000000FF, (jedec_id>>8)&0x000000FF, jedec_id&0x000000FF);
 
 
 //  spi_test(&hspi3);
   char command_str[MAX_COMMMAND_SIZE];
-
   uint8_t flash_buffer[FLASH_BUF_SZ];
+
+
+  printf("SystemCoreClock = %lu\n", SystemCoreClock);
+
 
   while (1)
   {
-	  //printf("Enter string: ");
 
-	  //scanf("%s", str);
-	  fgets(command_str, sizeof(command_str), stdin);
-
-	  //printf("\n\n\n You typed: %s\n", command_str);
-
-	  int cmd = parse_command(command_str, params, MAX_PARAMS);
-
-//	  printf("cmd=%d: ", cmd);
-//      for (int j = 0; j < 8; ++j)
-//          printf("%08x ", params[j]);
-//      printf("\n");
-
-
-//#define ASCII_READ
-	  uint32_t i, id;
-
-	  switch (cmd)
+	  if (trace_trigger == 0)
 	  {
-	  case CMD_GET_ID:
-		  id = flash_read_jedec_id(&hspi3);
-		  printf("Flash JEDEC ID: %02X %02X %02X\n", (id>>16)&0x000000FF, (id>>8)&0x000000FF, id&0x000000FF);
-		  break;
-	  case CMD_GET_ID_BIN:
-		  id = flash_read_jedec_id(&hspi3);
-		  //printf("%c%c%c\n", (id>>16)&0x000000FF, (id>>8)&0x000000FF, id&0x000000FF);
+		  fgets(command_str, sizeof(command_str), stdin);
+		  int cmd = parse_command(command_str, params, MAX_PARAMS);
+		  uint32_t i, id;
+		  switch (cmd)
+		  {
+		  case CMD_GET_ID:
+			  id = flash_read_jedec_id(&hspi3);
+			  printf("Flash JEDEC ID: %02X %02X %02X\n", (id>>16)&0x000000FF, (id>>8)&0x000000FF, id&0x000000FF);
+			  break;
+		  case CMD_GET_ID_BIN:
+			  id = flash_read_jedec_id(&hspi3);
+			  //printf("%c%c%c\n", (id>>16)&0x000000FF, (id>>8)&0x000000FF, id&0x000000FF);
 
-		  uint8_t id_bytes[3] = {
-		      (id >> 16) & 0xFF,
-		      (id >> 8)  & 0xFF,
-		      id & 0xFF
-		  };
-		  HAL_UART_Transmit(&hlpuart1, id_bytes, 3, HAL_MAX_DELAY);
+			  uint8_t id_bytes[3] = {
+				  (id >> 16) & 0xFF,
+				  (id >> 8)  & 0xFF,
+				  id & 0xFF
+			  };
+			  HAL_UART_Transmit(&hlpuart1, id_bytes, 3, HAL_MAX_DELAY);
 
-		  break;
+			  break;
 
-	  case CMD_FLASH_READ:
-		  printf("reading flash, address=%.8X, len=%.8X\n", params[0], params[1]);
-		  if (check_addr_len (params[0], params[1]) )
-		  {
-			  flash_read_dma(params[0], flash_buffer , params[1], &hspi3);
+		  case CMD_FLASH_READ:
+			  printf("reading flash, address=%.8X, len=%.8X\n", params[0], params[1]);
+			  if (check_addr_len (params[0], params[1]) )
+			  {
+				  flash_read_dma(params[0], flash_buffer , params[1], &hspi3);
 
-			  for (i=0; i<params[1]-1; i++)
-				  printf("%.2X,", flash_buffer[i]);
-			  printf("%.2X\n", flash_buffer[i]);
-		  }
-		  else
-		  {
-			  printf("parameter error\n");
-		  }
-		  break;
-	  case CMD_FLASH_READ_BINARY:
-//		  printf("reading flash, address=%.8X, len=%.8X\n", params[0], params[1]);
-		  if (check_addr_len (params[0], params[1]) )
-		  {
-			  flash_read_dma(params[0], flash_buffer , params[1], &hspi3);
+				  for (i=0; i<params[1]-1; i++)
+					  printf("%.2X,", flash_buffer[i]);
+				  printf("%.2X\n", flash_buffer[i]);
+			  }
+			  else
+			  {
+				  printf("parameter error\n");
+			  }
+			  break;
+		  case CMD_FLASH_READ_BINARY:
+	//		  printf("reading flash, address=%.8X, len=%.8X\n", params[0], params[1]);
+			  if (check_addr_len (params[0], params[1]) )
+			  {
+				  flash_read_dma(params[0], flash_buffer , params[1], &hspi3);
 
-			  //for (i=0; i<params[1]; i++)
-			//	  printf("%c", flash_buffer[i]);
-			  HAL_UART_Transmit(&hlpuart1, flash_buffer, params[1], HAL_MAX_DELAY);
+				  //for (i=0; i<params[1]; i++)
+				//	  printf("%c", flash_buffer[i]);
+				  HAL_UART_Transmit(&hlpuart1, flash_buffer, params[1], HAL_MAX_DELAY);
 
-		  }
-		  else
-		  {
-			  printf("parameter error\n");
-		  }
-		  break;
-	  case CMD_FLASH_WRITE:
-		  if (check_addr_len (params[0], params[1]) )
-		  {
-			  printf("Writing flash, address=%.8X, len=%.8X\n", params[0], params[1]);
-			  uint8_t u8buf[256];
-			  for (uint32_t i=0; i<SPIFLASH_PAGE_SIZE; ++i )  u8buf[i] = params[i+2];
-			  //flash_page_program_dma_async(params[0], u8buf, params[1], &hspi3);
-			  flash_page_program_dma(params[0], u8buf, params[1], &hspi3);
-		  }
-		  else
-		  {
-			  printf("parameter error\n");
-		  }
-		  break;
-	  case CMD_FLASH_ERASE_SECTOR:
-		  if (check_addr_len (params[0], 4096) )
-		  {
-			  printf("Erasing sector# %.8X\n", params[0]);
-			  flash_erase_sector(params[0], &hspi3);
-		  }
-		  else
-		  {
-			  printf("parameter error\n");
-		  }
-		  break;
+			  }
+			  else
+			  {
+				  printf("parameter error\n");
+			  }
+			  break;
+		  case CMD_FLASH_WRITE:
+			  if (check_addr_len (params[0], params[1]) )
+			  {
+				  printf("Writing flash, address=%.8X, len=%.8X\n", params[0], params[1]);
+				  uint8_t u8buf[256];
+				  for (uint32_t i=0; i<SPIFLASH_PAGE_SIZE; ++i )  u8buf[i] = params[i+2];
+				  //flash_page_program_dma_async(params[0], u8buf, params[1], &hspi3);
+				  flash_page_program_dma(params[0], u8buf, params[1], &hspi3);
+			  }
+			  else
+			  {
+				  printf("parameter error\n");
+			  }
+			  break;
+		  case CMD_FLASH_ERASE_SECTOR:
+			  if (check_addr_len (params[0], 4096) )
+			  {
+				  printf("Erasing sector# %.8X\n", params[0]);
+				  flash_erase_sector(params[0], &hspi3);
+			  }
+			  else
+			  {
+				  printf("parameter error\n");
+			  }
+			  break;
 
-	  case CMD_FLASH_ERASE_CHIP:
-		  printf("Erasing chip\n");
-		  flash_erase_chip(&hspi3);
-		  break;
-	  default:
-		  printf("Unknown command\n");
-		  break;
+		  case CMD_FLASH_ERASE_CHIP:
+			  printf("Erasing chip\n");
+			  flash_erase_chip(&hspi3);
+			  break;
+		  case CMD_TRIGGER_TRACE:
+
+				  // uncomment to create trace testfile
+				  uint32_t trace_addr = trace_init(&traceobj, "trace_test#1-004", &hspi3);
+
+				  trace_trigger = 1;
+				  break;
+		  default:
+			  printf("Unknown command\n");
+			  break;
+		  }
 	  }
+	  else // trace_trigger
+	  {
+		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_RESET);				// run commutator
+		ctr32 = DWT->CYCCNT;
+		uint32_t tt = DWT->CYCCNT;
+		trace(&traceobj, &hspi3);
+		tt32 = DWT->CYCCNT - tt;
+		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_SET);				// run commutator
+		HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_14);				// run commutator
 
+		HAL_Delay(1);
+
+	  }
 
 
 	  //HAL_Delay(100);
@@ -581,6 +640,8 @@ int parse_command(char *input, uint32_t *out_params, size_t max_params) {
         cmd_index = CMD_FLASH_ERASE_SECTOR;
     else if (strcmp(tokens[0], "erase_chip") == 0)
         cmd_index = CMD_FLASH_ERASE_CHIP;
+    else if (strcmp(tokens[0], "tg") == 0)
+        cmd_index = CMD_TRIGGER_TRACE;
     else
         return CMD_INVALID;
 
