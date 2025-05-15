@@ -17,11 +17,11 @@
   */
 /* USER CODE END Header */
 
-// BUG: Normal processing time for trace() is 3.75us. However sometimes this jumps to ~40us. Needs investigation
+// BUG: 
 // BUG:
 // BUG:
-// TODO: Optimize trace function
-// TODO:
+// TODO: More optimizing of trace function
+// TODO: Convert trace to ping/pong buffer to avoid -4 kludge or make less appparent
 // TODO:
 
 
