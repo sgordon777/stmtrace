@@ -35,6 +35,7 @@
 #include "trace_spiflash.h"
 #include <stdio.h>
 #include <string.h>
+#include <stdlib.h>
 
 /* USER CODE END Includes */
 
@@ -68,21 +69,21 @@ int trace_trigger = 0;
 #define TRACEBUF_SZ_B (1024)
 //#define TRACE_FILE_LEN_B (32768 * 8)
 #define TRACE_FILE_LEN_B (1024)
-uint8_t trace_buf[TRACEBUF_SZ_B];
+uint8_t trace_buf[TRACEBUF_SZ_B+4];
 
-uint32_t ctr32=0;
-uint32_t tt32=0;
+uint32_t thing_a=0;
+uint32_t thing_b=0;
 trace_object_t traceobj = {
 		.stat = 0,
-		.buffer_start = trace_buf,
+		.buffer_start = trace_buf+4,
 		.buffer_len_b = TRACEBUF_SZ_B,
 		.trace_entry_len_b = 8,
 		.trace_file_len_b = TRACE_FILE_LEN_B,
 		.flash_len_b = 1024*1024*16,
 		.num_tracevals = 2,
 		.tracevals = {
-		{&ctr32, 4},
-		{&tt32, 4}
+		{&thing_a, 4},
+		{&thing_b, 4}
 		}
 };
 
@@ -318,7 +319,7 @@ int main(void)
 		  case CMD_TRIGGER_TRACE:
 
 				  // uncomment to create trace testfile
-				  uint32_t trace_addr = trace_init(&traceobj, "trace_test#1-004", &hspi3);
+				  uint32_t trace_addr = trace_init(&traceobj, "trace_test#1-034", &hspi3);
 
 				  trace_trigger = 1;
 				  break;
@@ -330,10 +331,10 @@ int main(void)
 	  else // trace_trigger
 	  {
 		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_RESET);				// run commutator
-		ctr32 = DWT->CYCCNT;
+		thing_a = DWT->CYCCNT;
 		uint32_t tt = DWT->CYCCNT;
 		trace(&traceobj, &hspi3);
-		tt32 = DWT->CYCCNT - tt;
+		thing_b = DWT->CYCCNT - tt;
 		HAL_GPIO_WritePin(GPIOB, GPIO_PIN_13, GPIO_PIN_SET);				// run commutator
 		HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_14);				// run commutator
 
